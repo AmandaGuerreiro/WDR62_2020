@@ -1,0 +1,657 @@
+function [metadata,spots] = imsread(filename)
+%IMSREAD reads Imaris file 5.5
+%
+%   Nicolas Liaudet
+%   Bioimaging Core Facility - UNIGE
+%   https://www.unige.ch/medecine/bioimaging/en/bioimaging-core-facility/
+%
+%   25-Oct-2019
+
+% [metadata,spots] = imsread('\\isis.unige.ch\medecine\nas02\Bioimagerie\_BIOIMAGING_ADMIN\Documents de LIAUDET\Projects\Meraldi P\PM_Guerreiro_2019\DATA\Batch1\siWDR62\siWDR62_C01d.ims');
+fileID = H5F.open(filename, 'H5F_ACC_RDONLY', 'H5P_DEFAULT');
+
+metadata = getmetadata(fileID);
+[~,metadata.FileName] = fileparts(filename);
+spots = getspots(fileID);
+
+H5F.close(fileID);
+end
+
+
+
+    function metadata = getmetadata(fileID)
+        metadata.DimX = 0;
+        metadata.DimY = 0;
+        metadata.DimZ = 0;
+        metadata.DimT = 0;
+        metadata.DimC = 0;
+        
+        metadata.PosX = [0 0];
+        metadata.PosY = [0 0];
+        metadata.PosZ = [0 0];
+                
+        metadata.ResX = 0;
+        metadata.ResY = 0;
+        metadata.ResZ = 0;
+        metadata.ResT = 0;
+        
+        metadata.UnitX = 'um';
+        metadata.UnitY = 'um';
+        metadata.UnitZ = 'um';
+       
+        metadata.time = 0;
+        
+        metadata.ChannelName = {};
+        
+        %------------------ Stack dimensions ------------------
+        %X voxel Nb
+        Image_gID     = H5G.open(fileID,'/DataSetInfo/Image/');
+        X_aID         = H5A.open(Image_gID,'X');
+        metadata.DimX = str2double(H5A.read(X_aID));
+        H5A.close(X_aID);        
+        %Y voxel Nb
+        Y_aID         = H5A.open(Image_gID,'Y');
+        metadata.DimY = str2double(H5A.read(Y_aID));
+        H5A.close(Y_aID);
+        %Z voxel Nb
+        Z_aID         = H5A.open(Image_gID,'Z');
+        metadata.DimZ = str2double(H5A.read(Z_aID));
+        H5A.close(Z_aID);
+        %T time point
+        TimeInfo_gID    = H5G.open(fileID,'/DataSetInfo/TimeInfo/');
+        T_aID           = H5A.open(TimeInfo_gID,'DatasetTimePoints');
+        metadata.DimT   = str2double(H5A.read(T_aID));
+        H5A.close(T_aID);        
+        %C channel Nb
+        idx_type = 'H5_INDEX_NAME';
+        order    = 'H5_ITER_INC';
+        lapl_id  = 'H5P_DEFAULT';
+        idxC = 0;        
+        while H5L.exists(fileID,...
+       ['/DataSet/ResolutionLevel 0/TimePoint 0/Channel ' num2str(idxC)],...
+                'H5P_DEFAULT')
+            idxC = idxC+1;
+        end
+        metadata.DimC = idxC;  
+        
+        %------------------ Stack position ------------------        
+        %Xmin-Xmax
+        X_aID = H5A.open(Image_gID,'ExtMin0');
+        metadata.PosX(1) = str2double(H5A.read(X_aID));
+        X_aID = H5A.open(Image_gID,'ExtMax0');
+        metadata.PosX(2) = str2double(H5A.read(X_aID));
+        H5A.close(X_aID);
+        %Ymin-Ymax
+        Y_aID = H5A.open(Image_gID,'ExtMin1');
+        metadata.PosY(1) = str2double(H5A.read(Y_aID));
+        Y_aID = H5A.open(Image_gID,'ExtMax1');
+        metadata.PosY(2) = str2double(H5A.read(Y_aID));
+        H5A.close(Y_aID);
+        %Zmin-Zmax
+        Z_aID = H5A.open(Image_gID,'ExtMin2');
+        metadata.PosZ(1) = str2double(H5A.read(Z_aID));
+        Z_aID = H5A.open(Image_gID,'ExtMax2');
+        metadata.PosZ(2) = str2double(H5A.read(Z_aID));
+        H5A.close(Z_aID);
+        H5G.close(Image_gID);
+        
+        %------------------ Stack resolution ------------------        
+        metadata.ResX = diff(metadata.PosX)/metadata.DimX;
+        metadata.ResY = diff(metadata.PosY)/metadata.DimY;
+        metadata.ResZ = diff(metadata.PosZ)/metadata.DimZ;
+        
+        %------------------ time parameters ------------------
+        TimeInfo_gID    = H5G.open(fileID,'/DataSetInfo/TimeInfo/','H5P_DEFAULT');
+        tmpstruct.timestamp = cell(metadata.DimT,1);
+        tmpstruct.idx = 1;
+        [~,~,tmpstruct] = H5A.iterate(TimeInfo_gID,...
+            'H5_INDEX_NAME','H5_ITER_INC',2,@gettimepoints,tmpstruct);
+        H5G.close(TimeInfo_gID);
+        metadata.time= sort(datetime(tmpstruct.timestamp,...
+                                   'InputFormat','yyyy-MM-dd HH:mm:ss.SSSSSSSSS'));
+        metadata.time.Format = 'yyyy-MM-dd HH:mm:ss.SSSSSSSSS';
+        dt = diff(metadata.time);
+        dt.Format = 's';
+        metadata.ResT = mean(dt);
+        
+        %------------------ units ------------------
+        Image_gID     = H5G.open(fileID,'/DataSetInfo/Image/');
+        X_aID         = H5A.open(Image_gID,'Unit');
+        metadata.UnitX = H5A.read(X_aID);
+        metadata.UnitY = metadata.UnitX; 
+        metadata.UnitZ = metadata.UnitX;        
+        H5A.close(X_aID); 
+        
+        %------------------ Channel names ------------------
+        ChannelName = cell(metadata.DimC,1);
+        for idxCh=1:metadata.DimC
+            loc = ['/DataSetInfo/Channel ' num2str(idxCh-1) '/'];
+            if H5L.exists(fileID,loc, 'H5P_DEFAULT')
+                CH_gID  = H5G.open(fileID,loc);
+                CHn_aID = H5A.open(CH_gID,'Name');
+                ChannelName{idxCh} = H5A.read(CHn_aID);
+            else
+                ChannelName{idxCh} = ['Ch_' num2str(idxCh)];
+            end
+        end
+        metadata.ChannelName = ChannelName;
+
+    end
+
+    function data = getdata(fileID,metadata)
+    
+    end
+    
+    function [status,cdata_out] = gettimepoints(obj_id,attr_name,info,cdata_in)
+        attr_id = H5A.open(obj_id,attr_name);
+        data    = H5A.read(attr_id);
+        cdata_in.timestamp{cdata_in.idx} = data ;
+        cdata_in.idx = cdata_in.idx+1;
+        cdata_out = cdata_in;
+        status = 0;
+    end
+
+    function spots = getspots(fileID)
+    %Get spots position
+    if ~H5L.exists(fileID,'Scene8','H5P_DEFAULT')
+        spots = [];
+        return
+    end
+    Content_gID = H5G.open(fileID,'/Scene8/Content/');
+    
+    if ~H5L.exists(Content_gID, 'Points0', 'H5P_DEFAULT')
+        spots = [];
+        return
+    end
+    
+    Content_aID = H5A.open(Content_gID,'NumberOfPoints');
+    NBspots = H5A.read(Content_aID);
+    spots = struct('Name',cell(NBspots,1),...
+                   'Tracks',cell(NBspots,1));
+    
+    for idxSpot = 4%1:NBspots               
+        Spots_gID = H5G.open(Content_gID,['Points' num2str(idxSpot-1)]);
+        
+        Spots_aID = H5A.open(Spots_gID,'Name');        
+        Name = {H5A.read(Spots_aID)'};
+        H5A.close(Spots_aID)
+                
+        DID = H5D.open(Spots_gID, 'Spot');                
+        Spot = transpose(H5D.read(DID));        
+        H5D.close(DID)
+        
+        DID = H5D.open(Spots_gID, 'TrackObject0');                
+        TrackObject0 = transpose(H5D.read(DID));        
+        H5D.close(DID)
+        
+        DID = H5D.open(Spots_gID, 'SpotTimeOffset');                
+        SpotTimeOffset = transpose(H5D.read(DID));        
+        H5D.close(DID)
+        
+        DID = H5D.open(Spots_gID, 'Track0');                
+        Track0 = transpose(H5D.read(DID));        
+        H5D.close(DID)
+        H5G.close(Spots_gID)
+        
+        DID = H5D.open(fileID, ['/Scene/Content/Points' num2str(idxSpot-1) '/Time']);                
+        Time = transpose(H5D.read(DID));        
+        H5D.close(DID)
+          
+        alltidx = repelem(SpotTimeOffset.ID+1,SpotTimeOffset.IndexEnd-SpotTimeOffset.IndexBegin);
+        
+        
+        TrackID = cell(length(Track0.ID),1);
+        SpotID  = cell(length(Track0.ID),1);
+        X       = cell(length(Track0.ID),1);
+        Y       = cell(length(Track0.ID),1);
+        Z       = cell(length(Track0.ID),1);
+        TimeIdx = cell(length(Track0.ID),1);
+        for idxTrack = 1:length(Track0.ID)
+            
+            
+            idxBegin = Track0.IndexTrackObjectBegin(idxTrack)+1;
+%             if idxBegin == 0
+%                 idxBegin = idxBegin+1;
+%             end
+            idxEnd   = Track0.IndexTrackObjectEnd(idxTrack);
+            
+            idx_SpotInTrack   = ismember(Spot.ID,TrackObject0.ID_Object(idxBegin:idxEnd));
+            
+            TrackID{idxTrack} = repmat(Track0.ID(idxTrack),[sum(idx_SpotInTrack) 1 ]);           
+            SpotID{idxTrack}  = Spot.ID(idx_SpotInTrack);
+            X{idxTrack}       = Spot.PositionX(idx_SpotInTrack);
+            Y{idxTrack}       = Spot.PositionY(idx_SpotInTrack);
+            Z{idxTrack}       = Spot.PositionZ(idx_SpotInTrack);
+            TimeIdx{idxTrack} = alltidx(idx_SpotInTrack);
+
+        end
+        TrackID = cat(1,TrackID{:});
+        SpotID  = cat(1,SpotID{:});
+        X       = cat(1,X{:});
+        Y       = cat(1,Y{:});
+        Z       = cat(1,Z{:});
+        TimeIdx = cat(1,TimeIdx{:});
+        
+        Tracks = table(TrackID,...
+            SpotID,...
+            X,...
+            Y,...
+            Z,...
+            TimeIdx);
+        
+        
+        
+%         ID = TrackObject0.ID_Object;      
+%         IDTRACK = zeros(length(ID),1,'like',Spot.ID);
+% %         X = zeros(length(ID),1,'like',Spot.PositionX);
+% %         Y = zeros(length(ID),1,'like',Spot.PositionY);
+% %         Z = zeros(length(ID),1,'like',Spot.PositionZ);
+%         %         T = zeros(length(ID),1,'like',Spot.ID)
+%         for idxTrack = 1:length(Track0.ID)
+%             idxBegin = Track0.IndexTrackObjectBegin(idxTrack)+1;
+%             idxEnd   = Track0.IndexTrackObjectEnd(idxTrack);
+%             idx_currTrack = ismember(Spot.ID,ID(idxBegin:idxEnd));
+%             IDTRACK(idx_currTrack) = Track0.ID(idxTrack);
+%             
+%         end
+%         
+%         Tracks = table(IDTRACK,...
+%             Spot.ID,...
+%             Spot.PositionX,...
+%             Spot.PositionY,...
+%             Spot.PositionZ,...
+%             Time(Spot.ID+1)+1);
+        Tracks.Properties.VariableNames = {'TrackID','SpotID','X','Y','Z','TimeIdx'};
+        Tracks = sortrows(Tracks);
+        
+        spots(idxSpot).Name = Name;
+        spots(idxSpot).Tracks = Tracks;
+           
+    end
+%     H5A.close(Content_aID)
+%     H5G.close(Content_gID)
+%     
+%     
+% %     if H5L.exists(Spots_gID, 'Points0', 'H5P_DEFAULT')
+% %         Spots_gID = H5G.open(fileID,'/Scene8/Content/Points0/');
+% %         DID = H5D.open(Spots_gID, 'Spot');
+%         spots = transpose(H5D.read(DID));
+%         H5D.close(DID)
+%         
+%         DID = H5D.open(Spots_gID, 'TrackObject0');
+%         TrackObject0 = transpose(H5D.read(DID));
+%         H5D.close(DID)
+%     
+%         DID = H5D.open(Spots_gID, 'Track0');
+%         Track = transpose(H5D.read(DID));
+%         H5D.close(DID)
+%     
+%         Spots_gID = H5G.open(fileID,'/Scene/Content/Points0/');
+%         DID = H5D.open(Spots_gID, 'Time');
+%         Time = transpose(H5D.read(DID));
+%         H5D.close(DID)
+%     end
+%     spots.Time        = Time;
+%     spots.Track       = Track;
+%     spots.TrackObject = TrackObject;
+    
+
+    end
+    
+    
+
+
+
+
+ 
+% %%
+% 
+% if IsUiSelect
+%     CropPara = uiselect(ChName,DIM_XYZTC,RES_XYZ,POS_XYZ,time,FileName);
+% else
+%     CropPara.XYZT = [1 1 1 1;DIM_XYZTC(1:4)];
+%     CropPara.C    = [1:1:DIM_XYZTC(5)];
+% end
+% 
+% NBX = (CropPara.XYZT(2,1)-CropPara.XYZT(1,1)+1);
+% NBY = (CropPara.XYZT(2,2)-CropPara.XYZT(1,2)+1);
+% NBZ = (CropPara.XYZT(2,3)-CropPara.XYZT(1,3)+1);
+% 
+% NBC = length(CropPara.C);
+% NBT = (CropPara.XYZT(2,4)-CropPara.XYZT(1,4)+1);
+% NBstep = NBC*NBT;
+% % t_read = zeros(1,NBstep);
+% % k = 1;
+% % 
+% ch = cell(NBC,1);
+% for k=1:NBC
+%     ch{k} = ['Ch' num2str(k)];
+%     stack.(ch{k}) = zeros(NBY,NBX,NBZ,NBT,'uint16');
+% end
+% 
+% 
+% hw = waitbar(0,['Reading Data'],'Name',FileName);
+% 
+% 
+% dims = fliplr(CropPara.XYZT(2,1:3)-CropPara.XYZT(1,1:3))+1;
+% mem_space_id = H5S.create_simple(3,dims,[]);
+% plist = 'H5P_DEFAULT';
+% 
+% offset = fliplr([CropPara.XYZT(1,1:3)])-1;
+% block  = dims;
+% cnt = 1;
+% tmpidxT = 1;
+% t_read = zeros(1,NBstep);
+% for idxT = CropPara.XYZT(1,4):CropPara.XYZT(2,4)
+%     tmpidxC = 1;
+%     for idxC = CropPara.C
+%         tic
+%         loc = ['/DataSet/ResolutionLevel 0/TimePoint ' num2str(idxT-1),...
+%             '/Channel ' num2str(idxC-1)];
+%         gid = H5G.open(fileID,loc);
+%         dset_id = H5D.open(gid,'Data');
+%         file_space_id = H5D.get_space(dset_id);
+%         
+%         H5S.select_hyperslab(file_space_id,'H5S_SELECT_SET',...
+%             offset,[],[],block);
+%         data = H5D.read(dset_id,'H5ML_DEFAULT',...
+%             mem_space_id,file_space_id,plist);
+%         stack.(ch{tmpidxC})(:,:,:,tmpidxT) = flipud(permute(data,[2 1 3]));
+%         
+%         t_read(cnt) = toc;
+%         if mod(cnt,round(NBstep/100)) == 0 %each percent update...
+%             mot = mean(t_read(1:cnt));
+%             waitbar(cnt/NBstep,hw,...
+%                 {['Read stack: ' num2str(idxT) '/' num2str(NBT),...
+%                 ' - channel: ' num2str(idxC) '/' num2str(NBC)];
+%                 [num2str(100*cnt/NBstep,'%03.0f') '% Done',...
+%                 '. Time remaining: ',...
+%                 char(duration(0 , 0, (NBstep-cnt)*mot))]})
+%         end
+%         cnt = cnt+1;
+%         tmpidxC = tmpidxC+1;
+%     end
+%     tmpidxT = tmpidxT+1;
+% end
+% DATA.stack    = stack;
+% clear stack
+% 
+% 
+% % %Get spots position
+% % Spots_gID = H5G.open(fileID,'/Scene8/Content/');
+% % if H5L.exists(Spots_gID, 'Points0', 'H5P_DEFAULT')
+% %     Spots_gID = H5G.open(fileID,'/Scene8/Content/Points0/');
+% %     DID = H5D.open(Spots_gID, 'Spot');
+% %     spots = transpose(H5D.read(DID));    
+% %     H5D.close(DID)
+% %     
+% %     DID = H5D.open(Spots_gID, 'TrackObject0');
+% %     TrackObject = transpose(H5D.read(DID));
+% %     H5D.close(DID)
+% %     
+% %     DID = H5D.open(Spots_gID, 'Track0');
+% %     Track = transpose(H5D.read(DID));
+% %     H5D.close(DID)
+% %     
+% %     Spots_gID = H5G.open(fileID,'/Scene/Content/Points0/');
+% %     DID = H5D.open(Spots_gID, 'Time');
+% %     Time = transpose(H5D.read(DID));    
+% %     H5D.close(DID)
+% % end
+% % spots.Time        = Time;
+% % spots.Track       = Track;
+% % spots.TrackObject = TrackObject;
+% % 
+% % varargout{1} = spots;
+% 
+% 
+% H5D.close(dset_id);
+% H5G.close(gid);
+% H5F.close(fileID);
+% close(hw)
+% 
+% 
+% metadata.Name    = FileName;
+% metadata.Folder  = Folder;
+% 
+% time.t_perStack  = time.t_perStack(CropPara.XYZT(1,4):CropPara.XYZT(2,4));
+% metadata.time    = time;
+% metadata.RES_XYZ = RES_XYZ;
+% 
+% pmin  = POS_XYZ(1,:)+(CropPara.XYZT(1,1:3)-ones(1,3)).*RES_XYZ;
+% metadata.POS_XYZ = pmin;
+% 
+% metadata.DIM_XYZTC = [NBX NBY NBZ NBT NBC];
+% metadata.Channels_Name  = ChName(CropPara.C);
+% 
+% DATA.metadata = metadata;
+% 
+% end
+% 
+% 
+
+%     
+% 
+% 
+% 
+% function DC_XYZTC = uiselect(ChName,DIM_XYZTC,RES_XYZ,POS_XYZ,time,FileName)
+% 
+% h.f = figure('Units','pixel','Position',[50 50 565 170],...
+%     'Name','DATA selection',...
+%     'NumberTitle','off','Resize','off','Menubar','None','Toolbar','None');
+% dCh(:,1) = repmat({true},[size(ChName)]);
+% dCh(:,2) = ChName;
+% % dCh = [dCh;dCh;dCh;dCh]
+% 
+% XYZT(1,:) = [1 1 1 1];
+% XYZT(2,:) = DIM_XYZTC(1:4);
+% 
+% uicontrol('Parent',h.f,'Style','text','Units','pixel',...
+%     'Position',[55 150 465 20],'String',FileName,'FontWeight','bold');
+% 
+% 
+% h.t = uitable('Parent',h.f,'Data',dCh,'ColumnEditable',[true false],...
+%              'Units','Pixel','Position', [10 30 119 100],...
+%              'ColumnWidth',{20,80},...
+%              'RowName',{},'ColumnName',{});
+% uicontrol('Parent',h.f,'Style','text','Units','pixel',...
+%     'Position',[10 130 119 20],'String','Select Channels');
+% 
+% h.p = uipanel('Parent',h.f,'Units','Pixel',...
+%     'Position',[137 30 420 100],'TitlePosition','CenterTop',...
+%     'title','');
+% uicontrol('Parent',h.f,'Style','text','Units','pixel',...
+%     'Position',[310 130 119 20],'String','Select crop dimensions');
+% 
+% 
+% 
+% ds = 20;
+% uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[5 5+3*ds 13 13],'String','X:');
+% uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[5 5+2*ds 13 13],'String','Y:');
+% uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[5 5+ds 13 13],'String','Z:');
+% uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[5 5 13 13],'String','T:');
+% 
+% %--------------------------------------------------------------------------
+% uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[28 5+3.75*ds 30 13],'String','From:');
+%     
+% h.xmin = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[25 5+3*ds 40 13],'String',num2str(XYZT(1,1)),...
+%     'Callback',@ReCompute,'Tag','XMIN');
+% h.ymin = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[25 5+2*ds 40 13],'String',num2str(XYZT(1,2)),...
+%     'Callback',@ReCompute,'Tag','YMIN');
+% h.zmin = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[25 5+ds 40 13],'String',num2str(XYZT(1,3)),...
+%     'Callback',@ReCompute,'Tag','ZMIN');
+% h.tmin = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[25 5 40 13],'String',num2str(XYZT(1,4)),...
+%     'Callback',@ReCompute,'Tag','TMIN');
+% 
+% h.xmineq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[65 5+3*ds 80 13],...
+%     'String',num2str(POS_XYZ(1,1),'%06.2fum'),'Tag','XMINEQ');
+% h.ymineq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[65 5+2*ds 80 13],...
+%     'String',num2str(POS_XYZ(1,2),'%06.2fum'),'Tag','YMINEQ');
+% h.zmineq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[65 5+ds 80 13],...
+%     'String',num2str(POS_XYZ(1,3),'%06.2fum'),'Tag','ZMINEQ');
+% h.tmineq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[65 5 80 13],...
+%     'String',datestr(time.t_perStack(XYZT(1,4)),'MM:ss.FFF'),...
+%     'Tag','TMINEQ');
+% 
+% %--------------------------------------------------------------------------
+% uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[168 5+3.75*ds 30 13],'String','To:');
+% 
+% h.xmax = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[160 5+3*ds 40 13],'String',num2str(XYZT(2,1)),...
+%     'Callback',@ReCompute,'Tag','XMAX');
+% h.ymax = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[160 5+2*ds 40 13],'String',num2str(XYZT(2,2)),...
+%     'Callback',@ReCompute,'Tag','YMAX');
+% h.zmax = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[160 5+ds 40 13],'String',num2str(XYZT(2,3)),...
+%     'Callback',@ReCompute,'Tag','ZMAX');
+% h.tmax = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[160 5 40 13],'String',num2str(XYZT(2,4)),...
+%     'Callback',@ReCompute,'Tag','TMAX');
+% 
+% h.xmaxeq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[200 5+3*ds 80 13],...
+%     'String',num2str(POS_XYZ(2,1),'%06.2fum'),'Tag','XMAXEQ');
+% h.ymaxeq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[200 5+2*ds 80 13],...
+%     'String',num2str(POS_XYZ(2,2),'%06.2fum'),'Tag','YMAXEQ');
+% h.zmaxeq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[200 5+ds 80 13],...
+%     'String',num2str(POS_XYZ(2,3),'%06.2fum'),'Tag','ZMAXEQ');
+% h.tmaxeq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[200 5 80 13],...
+%     'String',datestr(time.t_perStack(XYZT(2,4)),'MM:ss.FFF'),...
+%     'Tag','TMAXEQ');
+% 
+% %--------------------------------------------------------------------------
+% uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[303 5+3.75*ds 30 13],'String','Size:');
+% 
+% h.xsize = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[295 5+3*ds 40 13],'String',num2str(XYZT(2,1)),...
+%     'Callback',@ReCompute,'Tag','XSIZE');
+% h.ysize = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[295 5+2*ds 40 13],'String',num2str(XYZT(2,2)),...
+%     'Callback',@ReCompute,'Tag','YSIZE');
+% h.zsize = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[295 5+ds 40 13],'String',num2str(XYZT(2,3)),...
+%     'Callback',@ReCompute,'Tag','ZSIZE');
+% h.tsize = uicontrol('Parent',h.p,'Style','edit','Units','pixel',...
+%     'Position',[295 5 40 13],'String',num2str(XYZT(2,4)),...
+%     'Callback',@ReCompute,'Tag','TSIZE');
+% 
+% h.xsizeeq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[335 5+3*ds 80 13],...
+%     'String',num2str(POS_XYZ(2,1),'%06.2fum'),'Tag','XSIZEEQ');
+% h.ysizeeq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[335 5+2*ds 80 13],...
+%     'String',num2str(POS_XYZ(2,2),'%06.2fum'),'Tag','YSIZEEQ');
+% h.zsizeeq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[335 5+ds 80 13],...
+%     'String',num2str(POS_XYZ(2,3),'%06.2fum'),'Tag','ZSIZEEQ');
+% h.tsizeeq = uicontrol('Parent',h.p,'Style','text','Units','pixel',...
+%     'Position',[335 5 80 13],...
+%     'String',datestr(time.t_perStack(XYZT(2,4)),'MM:ss.FFF'),...
+%     'Tag','TSIZEEQ');
+% 
+% uicontrol('Parent',h.f,'Style','PushButton','String','OK',...
+%     'Units','pixel','Position',[260 5 50 25],'FontWeight','Bold',...
+%     'Callback',@OK)
+% 
+% movegui(h.f,'center')
+% 
+% uiwait(h.f)
+% 
+%     function ReCompute(hObject,eventdata)
+%         
+%         mMs  = hObject.Tag(2:end);
+%         xyzt = hObject.Tag(1);
+%         idx_xyzt = strfind('XYZT',xyzt);
+%         
+%         switch mMs
+%             case 'MIN'
+%                 vmin = round(str2double(get(hObject,'String')));
+%                 if isnan(vmin) || vmin<1 || vmin>XYZT(2,idx_xyzt)
+%                     vmin = XYZT(1,idx_xyzt);
+%                 end
+%                 XYZT(1,idx_xyzt) = vmin;
+%             case 'MAX'
+%                 vmax = round(str2double(get(hObject,'String')));
+%                 if isnan(vmax) || vmax<XYZT(1,idx_xyzt) || vmax>DIM_XYZTC(idx_xyzt)
+%                     vmax = XYZT(2,idx_xyzt);
+%                 end
+%                 XYZT(2,idx_xyzt) = vmax;
+%             case 'SIZE'
+%                 vsize = round(str2double(get(hObject,'String')));
+%                 if isnan(vsize) || vsize<1 || vsize>DIM_XYZTC(idx_xyzt)
+%                     vsize = (XYZT(2,idx_xyzt)-XYZT(1,idx_xyzt)+1);
+%                 end
+%                 XYZT(2,idx_xyzt) = min(XYZT(1,idx_xyzt)+vsize-1,...
+%                     DIM_XYZTC(idx_xyzt));
+%                 % XYZT(1,1) = XYZT(1,1)-(xsize-(XYZT(2,1)-XYZT(1,1)+1))
+%                 XYZT(1,idx_xyzt) = XYZT(2,idx_xyzt)-vsize+1;
+%                 
+%         end
+%         
+%         vmin  = XYZT(1,idx_xyzt);
+%         vmax  = XYZT(2,idx_xyzt);
+%         vsize = XYZT(2,idx_xyzt)-XYZT(1,idx_xyzt)+1;
+%         
+%         hobj = findobj('Tag',[xyzt 'MIN']);
+%         set(hobj,'String',num2str(vmin))
+%         hobj = findobj('Tag',[xyzt 'MAX']);
+%         set(hobj,'String',num2str(vmax))
+%         hobj = findobj('Tag',[xyzt 'SIZE']);
+%         set(hobj,'String',num2str(vsize));
+%         
+%         if idx_xyzt ~=4
+%             pmin  = POS_XYZ(1,idx_xyzt)+(vmin-1)*RES_XYZ(idx_xyzt);
+%             pmax  = POS_XYZ(1,idx_xyzt)+(vmax)*RES_XYZ(idx_xyzt);
+%             psize = RES_XYZ(idx_xyzt)*vsize;
+%             
+%             hobj = findobj('Tag',[xyzt 'MINEQ']);
+%             set(hobj,'String',num2str(pmin,'%06.2fum'));
+%             hobj = findobj('Tag',[xyzt 'MAXEQ']);
+%             set(hobj,'String',num2str(pmax,'%06.2fum'));
+%             hobj = findobj('Tag',[xyzt 'SIZEEQ']);
+%             set(hobj,'String',num2str(psize,'%06.2fum'));
+%         else
+%             tmin = time.t_perStack(1)+(vmin-1)*time.t_sampling;
+%             tmax = time.t_perStack(1)+(vmax)*time.t_sampling;
+%             td   = time.t_sampling*vsize;
+%             hobj = findobj('Tag',[xyzt 'MINEQ']);
+%             set(hobj,'String',datestr(tmin,'MM:ss.FFF'));
+%             hobj = findobj('Tag',[xyzt 'MAXEQ']);
+%             set(hobj,'String',datestr(tmax,'MM:ss.FFF'));
+%             hobj = findobj('Tag',[xyzt 'SIZEEQ']);
+%             set(hobj,'String',datestr(td,'MM:ss.FFF'));
+%         end
+%         
+%         
+%         
+%     end
+% 
+%     function OK(hObject,eventdata)
+%         DC_XYZTC.XYZT =  XYZT;
+%         chsel = get(h.t,'DATA');                
+%         chsel = cell2mat(chsel(:,1));
+%         idxch = [1:length(chsel)];
+%         chsel = idxch(chsel);
+%         DC_XYZTC.C = chsel;
+%         close(h.f)
+%     end
+

@@ -1,0 +1,233 @@
+<!-- %   Nicolas Liaudet
+%   Bioimaging Core Facility - UNIGE
+%   https://www.unige.ch/medecine/bioimaging/en/bioimaging-core-facility/
+% 
+%   v1.0 21-Nov-2019 NL -->
+
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+	h1{
+		font: 16px helvetica;		
+		text-align: center;	
+		font-weight: bold;
+	}	
+	h2{
+		font: 14px helvetica;		
+		text-align: left;		
+	}	
+	p{
+	font: 12px helvetica;
+	}	
+	</style>
+	
+	<script type="text/javascript">
+         
+        function setup(htmlComponent) {	          
+			var initialData = htmlComponent.Data;
+			
+			
+			var alphaval = document.getElementById("Alpha");
+            alphaval.textContent = initialData.alpha; 
+			
+			var ResumeTable = document.getElementById("Resume");
+			var tbl = document.createElement("table");
+			var tblBody = document.createElement("tbody");
+			for (var i = 1; i <= 5; i++) {
+				var row = document.createElement("tr");
+				for (var j = 0; j <= initialData.Conditions.length; j++) {
+					var cell = document.createElement("td");					
+					
+					if (i == 1) {
+						if (j == 0) {							
+							
+						} else {
+							//var cellText = document.createTextNode(initialData.Conditions[j-1]);	
+							cell.innerHTML = "<b>"+initialData.Conditions[j-1];							
+							cell.align = "center";
+							//cell.style.background = "rgb(128,0,200)";
+						}
+						
+					} else if (i==2) {
+						if (j == 0) {
+							cell.innerHTML = "N";				
+						} else {
+							cell.innerHTML = initialData.N[j-1];
+							
+						
+						}
+					} else if (i==3) {
+						if (j == 0) {
+							/*var cellText = document.createTextNode("Mean (&mu;m&middot;min<sup>-1</sup>)");*/
+							cell.innerHTML = "Mean ("+initialData.Unit+")";
+						} else {
+							cell.innerHTML = Number.parseFloat(initialData.m[j-1]).toFixed(3);												
+						
+						}
+					} else if (i==4) {
+						if (j == 0) {
+							//var cellText = document.createTextNode("StDev");					
+							cell.innerHTML = "StDev ("+initialData.Unit+")";/* (&mu;m&middot;min<sup>-1</sup>)";*/
+						} else {
+							//var cellText = document.createTextNode("qwdN");
+							cell.innerHTML = Number.parseFloat(initialData.s[j-1]).toFixed(3);						
+						}	
+					} else if (i==5) {
+						if (j == 0) {
+							//var cellText = document.createTextNode("StDev");					
+							cell.innerHTML = "sem ("+initialData.Unit+")";/* (&mu;m&middot;min<sup>-1</sup>)";*/
+						} else {
+							//var cellText = document.createTextNode("qwdN");
+							cell.innerHTML = Number.parseFloat(initialData.sem[j-1]).toFixed(3);						
+						}	
+						
+					
+					}
+					//cell.appendChild(cellText);
+					
+				
+					
+					
+					row.appendChild(cell);
+				}
+				tblBody.appendChild(row);
+			}
+            tbl.appendChild(tblBody);
+			tbl.width = "100%";	
+			tbl.border = "1px solid black";
+			ResumeTable.appendChild(tbl);
+			
+			
+			
+			var NormalTable = document.getElementById("Normal");
+			var tbl = document.createElement("table");
+			var tblBody = document.createElement("tbody");
+			for (var i = 1; i <= 2; i++) {
+				var row = document.createElement("tr");
+				for (var j = 0; j <= initialData.Conditions.length; j++) {
+					var cell = document.createElement("td");
+					if (i == 1) {
+						if (j == 0) {
+												
+						} else {						
+						cell.innerHTML = "<b>"+initialData.Conditions[j-1];							
+						cell.align = "center";
+						//cell.style.background = "rgb(128,0,200)";
+						}
+						
+					} else {
+						if (j == 0) {
+							cell.innerHTML = "p-value";				
+						} else {						
+							cell.innerHTML = Number.parseFloat(initialData.Normality.p[j-1]).toFixed(3);						
+							 
+							if (initialData.Normality.p[j-1]<=initialData.alpha){
+								cell.style.background = "rgb(215,25,28)";
+							} else{
+								cell.style.background = "rgb(26,150,65)";
+							}
+						}
+					}
+					row.appendChild(cell);
+				}
+				tblBody.appendChild(row);
+			}
+			tbl.appendChild(tblBody);
+			tbl.width = "100%";	
+			tbl.border = "1px solid black";
+			NormalTable.appendChild(tbl);
+			//
+			
+			var testname = document.getElementById("testname");
+			testname.textContent = initialData.TestName;
+			
+			var pval = document.getElementById("pval");
+			pval.textContent = Number.parseFloat(initialData.p).toFixed(3);
+			
+			//
+			var pval = document.getElementById("posthoc")					
+			var MultiTable = document.getElementById("multi");
+			var tbl = document.createElement("table");
+			var tblBody = document.createElement("tbody");			
+			if(typeof initialData.multi === 'undefined'){
+				if (initialData.Conditions.length >2){
+					pval.textContent = 'No post-hoc comparison';
+				} else{
+				
+				}
+			} else{
+				pval.textContent = 'Post-hoc comparisons:'
+				for (var i = 1; i <= initialData.multi.c.length+1; i++) {
+					var row = document.createElement("tr");
+					for (var j = 1; j <= 3; j++) {
+						var cell = document.createElement("td");
+						if ((i == 1)&&(j== 3)){
+							cell.innerHTML = "p-value";
+						} else if ((i > 1)&&(j < 3)){
+							
+							cell.innerHTML = initialData.Conditions[initialData.multi.c[i-2][j-1]-1];// 
+						} else if ((i > 1)&&(j == 3)){
+							cell.innerHTML = Number.parseFloat(initialData.multi.c[i-2][5]).toFixed(3) ;// ("row: "+ i +", col: "+ j);
+							if (initialData.multi.c[i-2][5]<=initialData.alpha){
+								cell.style.background = "rgb(215,25,28)";
+							} else{
+								cell.style.background = "rgb(26,150,65)";
+							}
+						}
+						
+						
+						row.appendChild(cell);						
+					}
+					tblBody.appendChild(row);
+				}
+				tbl.appendChild(tblBody);
+				tbl.width = "100%";	
+				tbl.border = "1px solid black";
+				MultiTable.appendChild(tbl);
+			}
+			
+			
+			
+        }
+		
+		
+		
+		
+		/*document.createTextNode( +", column initialData.Conditions[j] */
+
+
+	</script>
+
+</head>
+
+
+
+<body>    
+	
+	<h1>Comparison of the conditions</h1>
+	
+	<p><span id ="Resume"></span></p>
+	<p>&alpha;&nbsp;=&nbsp;<span id ="Alpha"></span></p>
+	
+	<hr>
+	
+	<h2>Lilliefors test for normal distribution:</h2>
+	<p><span id ="Normal"></span></p>
+	
+	<hr>
+	
+	<h2><span id ="testname"></span></h2>
+	<p>p-value&nbsp;=&nbsp;<span id ="pval"></span></p>
+	
+	<p><span id ="posthoc"></span></p>
+	<p><span id ="multi"></span></p>
+	
+	
+	
+	
+	
+
+</body>
+
+</html>
